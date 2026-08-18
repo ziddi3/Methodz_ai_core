@@ -1,0 +1,33 @@
+:root {
+  color-scheme: dark;
+  --bg: #05050a;
+  --pink: #ec4899;
+  --purple: #a855f7;
+  --cyan: #22d3ee;
+  --text: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
