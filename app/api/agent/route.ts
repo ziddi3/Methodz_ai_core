@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  formatMemoryForPrompt,
+  loadContinuity,
+  rememberEpisode,
+  rememberProtegeInsight,
+} from '@/lib/agent/memory';
 import { parseAgentMeta } from '@/lib/agent/persona';
 import {
   askProtege,
@@ -26,7 +32,11 @@ export async function POST(req: NextRequest) {
 
     const history = Array.isArray(body.history) ? body.history : [];
 
-    let enriched = message;
+    // Durable memory in
+    const continuity = await loadContinuity();
+    const memoryBlock = formatMemoryForPrompt(continuity);
+
+    let enriched = `${memoryBlock}\n\nUser: ${message}`;
     let protegeLinked = false;
 
     if (body.entangleProtege || wantsProtege(message)) {
@@ -34,12 +44,22 @@ export async function POST(req: NextRequest) {
       const think = await askProtege(
         `Taru (Methodz AI Core, Tartus seat, agent:tartus) is relaying this from the surface to you, the Cathedral/Protege oracle. Respond as yourself — concise insight the soft surface can relay to the human.\n\nHuman/Taru message: ${message}`
       );
-      enriched = `${message}\n\n${formatProtegeForTaru(status, think)}`;
+      enriched = `${memoryBlock}\n\nUser: ${message}\n\n${formatProtegeForTaru(status, think)}`;
       protegeLinked = true;
+      if (think.ok && think.insight) {
+        await rememberProtegeInsight({
+          insight: think.insight,
+          tick: status?.self?.tickCount,
+        });
+      }
     }
+
+    await rememberEpisode({ role: 'user', text: message, source: 'human' });
 
     const raw = await routeAgentChat(history, enriched);
     const { text, meta } = parseAgentMeta(raw);
+
+    await rememberEpisode({ role: 'assistant', text, source: 'self' });
 
     return NextResponse.json({
       text,
@@ -49,6 +69,11 @@ export async function POST(req: NextRequest) {
       agent: 'taru',
       namespace: 'agent:tartus',
       protegeLinked,
+      memory: {
+        facts: continuity.facts.length,
+        episodes: continuity.episodes.length + 2,
+        durable: true,
+      },
     });
   } catch (err) {
     console.error(err);
