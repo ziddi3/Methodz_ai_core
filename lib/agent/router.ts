@@ -148,9 +148,13 @@ function pushGroq(
   groqKey: string,
   messages: ChatMessage[]
 ) {
+  // Llama 3.3/3.1 free-tier IDs shut down ~2026-08-16 on Groq free/dev.
+  // Prefer current gpt-oss + qwen IDs; keep 8b as last-ditch if still enabled.
   for (const model of [
     process.env.GROQ_MODEL,
-    'llama-3.3-70b-versatile',
+    'openai/gpt-oss-20b',
+    'openai/gpt-oss-120b',
+    'qwen/qwen3.6-27b',
     'llama-3.1-8b-instant',
   ].filter(Boolean) as string[]) {
     attempts.push({
@@ -178,8 +182,7 @@ export async function routeAgentChat(
   const nsfw = looksNsfw(userMessage) || history.slice(-4).some((m) => looksNsfw(m.content));
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
 
-  // Primary brain: Groq (free API). NSFW → Groq first so Gemini safety is avoided.
-  // xAI only if a real console key exists (optional).
+  // Primary: Groq. NSFW still Groq-first (avoid Gemini safety refusals).
   if (nsfw) {
     if (groqKey) pushGroq(attempts, groqKey, messages);
     if (geminiKey) pushGemini(attempts, geminiKey, messages);
