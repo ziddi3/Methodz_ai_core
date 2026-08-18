@@ -4,7 +4,7 @@ Persistent multi-provider AI workspace. Built from the manifesto.
 
 ## Agents
 
-- **Taru** (`agent:tartus`) — Methodz Tartus catboy surface on the Femboy Agent Dashboard (`/ziddy-secret`).
+- **Taru** (`agent:tartus`) — Methodz Tartus catboy surface on the agent dashboard (`/ziddy-secret`).
   - Chat API: `POST /api/agent`
   - Emotion/action contract drives stage (tail, glow, smirk)
   - Brain: `XAI_API_KEY` or `OPENAI_API_KEY` (offline persona if unset)
