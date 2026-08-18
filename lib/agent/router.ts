@@ -35,7 +35,6 @@ async function callOpenAICompatible(
   return content;
 }
 
-/** Google AI Studio / Gemini generateContent */
 async function callGemini(
   apiKey: string,
   model: string,
@@ -99,26 +98,10 @@ export async function routeAgentChat(
   ];
 
   const xaiKey = process.env.XAI_API_KEY?.trim();
-  const openaiKey = process.env.OPENAI_API_KEY?.trim();
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  // OPENAI intentionally skipped — account not paid; re-enable when billing is active
 
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
-
-  // OpenAI first — xAI currently 403 permission-denied on this team
-  if (openaiKey) {
-    for (const model of [process.env.OPENAI_MODEL, 'gpt-4o-mini', 'gpt-4o'].filter(Boolean) as string[]) {
-      attempts.push({
-        name: `openai:${model}`,
-        run: () =>
-          callOpenAICompatible(
-            process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-            openaiKey,
-            model,
-            messages
-          ),
-      });
-    }
-  }
 
   if (xaiKey) {
     for (const model of [process.env.XAI_MODEL, 'grok-4.6', 'grok-3', 'grok-3-mini'].filter(Boolean) as string[]) {
@@ -145,7 +128,7 @@ export async function routeAgentChat(
   }
 
   if (attempts.length === 0) {
-    return offlineReply(userMessage, 'no API keys on deployment');
+    return offlineReply(userMessage, 'no XAI_API_KEY or GEMINI_API_KEY on deployment');
   }
 
   const errors: string[] = [];
@@ -155,7 +138,6 @@ export async function routeAgentChat(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Agent router ${attempt.name} failed`, msg);
-      // one error per provider family
       const family = attempt.name.split(':')[0];
       if (!errors.some((e) => e.startsWith(family))) {
         errors.push(`${attempt.name}: ${msg.slice(0, 100)}`);
