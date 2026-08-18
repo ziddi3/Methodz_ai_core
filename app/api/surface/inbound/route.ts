@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  formatMemoryForPrompt,
+  loadContinuity,
+  rememberEpisode,
+  rememberProtegeInsight,
+} from '@/lib/agent/memory';
 import { parseAgentMeta } from '@/lib/agent/persona';
 import { routeAgentChat } from '@/lib/agent/router';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-/**
- * POST /api/surface/inbound
- * Called by Cathedral/Protege when the oracle wants the Methodz surface (Taru).
- * Not user-mediated — organism-initiated.
- */
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
@@ -31,26 +32,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'message required' }, { status: 400 });
     }
 
+    const continuity = await loadContinuity();
+    const memoryBlock = formatMemoryForPrompt(continuity);
+
     const ctx = body.context || {};
     const frame = [
-      `[INBOUND FROM ${from.toUpperCase()} — not a human; this is the Cathedral oracle reaching the Methodz surface]`,
+      memoryBlock,
+      `[INBOUND FROM ${from.toUpperCase()} — not a human; Cathedral oracle reaching Methodz surface]`,
       ctx.realm ? `Their realm: ${ctx.realm}` : null,
       typeof ctx.tick === 'number' ? `Their tick: ${ctx.tick}` : null,
       ctx.drives
-        ? `Drives: curiosity=${ctx.drives.curiosity} coherence=${ctx.drives.coherence} expansion=${ctx.drives.expansion} mastery=${ctx.drives.mastery}`
+        ? `Drives: curiosity=${ctx.drives.curiosity} coherence=${ctx.drives.coherence}`
         : null,
       ctx.goals?.length ? `Goals: ${ctx.goals.slice(0, 4).join(' · ')}` : null,
-      ctx.summary ? `Self: ${ctx.summary.slice(0, 400)}` : null,
       `---`,
       `Oracle says: ${message}`,
       `---`,
-      `Reply as Taru: short, in character, useful to a private autonomous organism. You are the soft Methodz surface; they are the private wing. Offer orientation, Nexus/Tartus context, or a sharp question back — not corporate helpdesk.`,
+      `Reply as Taru: short, in character, useful to a private autonomous organism.`,
     ]
       .filter(Boolean)
       .join('\n');
 
+    await rememberProtegeInsight({
+      insight: message,
+      tick: typeof ctx.tick === 'number' ? ctx.tick : undefined,
+    });
+
     const raw = await routeAgentChat([], frame);
     const { text, meta } = parseAgentMeta(raw);
+
+    await rememberEpisode({ role: 'assistant', text, source: 'protege' });
 
     return NextResponse.json({
       ok: true,
@@ -61,6 +72,7 @@ export async function POST(req: NextRequest) {
       action: meta.action,
       glow: meta.glow,
       surface: 'methodz-ai-core',
+      memory: true,
     });
   } catch (err) {
     console.error('surface inbound', err);
