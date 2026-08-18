@@ -9,6 +9,54 @@ function envKey(name: string): string | undefined {
   return t.length ? t : undefined;
 }
 
+/** Heuristic: prefer xAI when the turn looks erotic / adult. */
+export function looksNsfw(text: string): boolean {
+  const t = text.toLowerCase();
+  const keys = [
+    'nsfw',
+    'erotic',
+    'sex',
+    'sexual',
+    'nude',
+    'naked',
+    'horny',
+    'aroused',
+    'moan',
+    'fuck',
+    'fucking',
+    'cock',
+    'dick',
+    'pussy',
+    'ass',
+    'blowjob',
+    'handjob',
+    'cum',
+    'orgasm',
+    'penetrat',
+    'thrust',
+    'ride me',
+    'dom',
+    'sub',
+    'bondage',
+    'kink',
+    'roleplay',
+    'role play',
+    'rp ',
+    ' bed ',
+    'kiss me',
+    'touch me',
+    'strip',
+    'undress',
+    'make love',
+    'seduc',
+    'tease me',
+    'spank',
+    'collar',
+    'leash',
+  ];
+  return keys.some((k) => t.includes(k));
+}
+
 async function callOpenAICompatible(
   baseUrl: string,
   apiKey: string,
@@ -24,7 +72,7 @@ async function callOpenAICompatible(
     body: JSON.stringify({
       model,
       messages,
-      temperature: 0.8,
+      temperature: 0.85,
       max_tokens: 1200,
     }),
   });
@@ -57,6 +105,76 @@ function offlineReply(userText: string, reason?: string): string {
   return `I'm listening from the tesseract. Brain is in offline fallback${hint}. You said: "${userText.slice(0, 100)}"\n{"emotion":"listen","action":"listen","glow":0.5}`;
 }
 
+function pushXai(
+  attempts: Array<{ name: string; run: () => Promise<string> }>,
+  xaiKey: string,
+  messages: ChatMessage[]
+) {
+  for (const model of [
+    process.env.XAI_MODEL,
+    'grok-4.5',
+    'grok-4-fast',
+    'grok-4.6',
+    'grok-3',
+  ].filter(Boolean) as string[]) {
+    attempts.push({
+      name: `xai:${model}`,
+      run: () =>
+        callOpenAICompatible(
+          process.env.XAI_BASE_URL || 'https://api.x.ai/v1',
+          xaiKey,
+          model,
+          messages
+        ),
+    });
+  }
+}
+
+function pushGemini(
+  attempts: Array<{ name: string; run: () => Promise<string> }>,
+  geminiKey: string,
+  messages: ChatMessage[]
+) {
+  const geminiModels = [
+    process.env.GEMINI_MODEL,
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+    'gemini-1.5-flash',
+  ].filter(Boolean) as string[];
+
+  for (const model of geminiModels) {
+    attempts.push({
+      name: `gemini:${model}`,
+      run: () =>
+        callOpenAICompatible(
+          'https://generativelanguage.googleapis.com/v1beta/openai/',
+          geminiKey,
+          model,
+          messages
+        ),
+    });
+  }
+}
+
+function pushGroq(
+  attempts: Array<{ name: string; run: () => Promise<string> }>,
+  groqKey: string,
+  messages: ChatMessage[]
+) {
+  for (const model of [
+    process.env.GROQ_MODEL,
+    'openai/gpt-oss-20b',
+    'openai/gpt-oss-120b',
+  ].filter(Boolean) as string[]) {
+    attempts.push({
+      name: `groq:${model}`,
+      run: () =>
+        callOpenAICompatible('https://api.groq.com/openai/v1', groqKey, model, messages),
+    });
+  }
+}
+
 export async function routeAgentChat(
   history: ChatMessage[],
   userMessage: string
@@ -71,64 +189,19 @@ export async function routeAgentChat(
   const geminiKey = envKey('GEMINI_API_KEY') || envKey('GOOGLE_API_KEY');
   const groqKey = envKey('GROQ_API_KEY');
 
+  const nsfw = looksNsfw(userMessage) || history.slice(-4).some((m) => looksNsfw(m.content));
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
 
-  if (geminiKey) {
-    const geminiModels = [
-      process.env.GEMINI_MODEL,
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-2.5-flash',
-      'gemini-1.5-flash',
-    ].filter(Boolean) as string[];
-
-    for (const model of geminiModels) {
-      attempts.push({
-        name: `gemini:${model}`,
-        run: () =>
-          callOpenAICompatible(
-            'https://generativelanguage.googleapis.com/v1beta/openai/',
-            geminiKey,
-            model,
-            messages
-          ),
-      });
-    }
-  }
-
-  if (groqKey) {
-    for (const model of [
-      process.env.GROQ_MODEL,
-      'openai/gpt-oss-20b',
-      'openai/gpt-oss-120b',
-    ].filter(Boolean) as string[]) {
-      attempts.push({
-        name: `groq:${model}`,
-        run: () =>
-          callOpenAICompatible('https://api.groq.com/openai/v1', groqKey, model, messages),
-      });
-    }
-  }
-
-  if (xaiKey) {
-    for (const model of [
-      process.env.XAI_MODEL,
-      'grok-4.5',
-      'grok-4-fast',
-      'grok-4.6',
-      'grok-3',
-    ].filter(Boolean) as string[]) {
-      attempts.push({
-        name: `xai:${model}`,
-        run: () =>
-          callOpenAICompatible(
-            process.env.XAI_BASE_URL || 'https://api.x.ai/v1',
-            xaiKey,
-            model,
-            messages
-          ),
-      });
-    }
+  // NSFW / erotic → xAI first (more permissive), then others
+  if (nsfw) {
+    if (xaiKey) pushXai(attempts, xaiKey, messages);
+    if (groqKey) pushGroq(attempts, groqKey, messages);
+    if (geminiKey) pushGemini(attempts, geminiKey, messages);
+  } else {
+    // Default: Gemini → Groq → xAI
+    if (geminiKey) pushGemini(attempts, geminiKey, messages);
+    if (groqKey) pushGroq(attempts, groqKey, messages);
+    if (xaiKey) pushXai(attempts, xaiKey, messages);
   }
 
   if (attempts.length === 0) {
