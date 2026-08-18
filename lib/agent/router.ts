@@ -2,7 +2,6 @@ import { TARU_SYSTEM_PROMPT } from './persona';
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'system'; content: string };
 
-/** Strip quotes/whitespace the way Cathedral Wing envKey does */
 function envKey(name: string): string | undefined {
   const v = process.env[name];
   if (!v) return undefined;
@@ -25,8 +24,8 @@ async function callOpenAICompatible(
     body: JSON.stringify({
       model,
       messages,
-      temperature: 0.85,
-      max_tokens: 600,
+      temperature: 0.8,
+      max_tokens: 1200,
     }),
   });
 
@@ -36,7 +35,7 @@ async function callOpenAICompatible(
   }
 
   const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
   };
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('Empty LLM response');
@@ -58,18 +57,13 @@ function offlineReply(userText: string, reason?: string): string {
   return `I'm listening from the tesseract. Brain is in offline fallback${hint}. You said: "${userText.slice(0, 100)}"\n{"emotion":"listen","action":"listen","glow":0.5}`;
 }
 
-/**
- * Cascade aligned with cathedral-wing GrokClient (Aug 2026):
- *   Gemini (OpenAI-compat endpoint) → xAI
- * Model defaults match Protege/Cathedral, not the broken gemini-2.0-flash id.
- */
 export async function routeAgentChat(
   history: ChatMessage[],
   userMessage: string
 ): Promise<string> {
   const messages: ChatMessage[] = [
     { role: 'system', content: TARU_SYSTEM_PROMPT },
-    ...history.slice(-12),
+    ...history.slice(-10),
     { role: 'user', content: userMessage },
   ];
 
@@ -79,7 +73,6 @@ export async function routeAgentChat(
 
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
 
-  // Gemini via OpenAI-compatible surface (same as Cathedral Wing)
   if (geminiKey) {
     const geminiModels = [
       process.env.GEMINI_MODEL,
@@ -103,7 +96,6 @@ export async function routeAgentChat(
     }
   }
 
-  // Groq if present (Cathedral free-tier path)
   if (groqKey) {
     for (const model of [
       process.env.GROQ_MODEL,
@@ -118,7 +110,6 @@ export async function routeAgentChat(
     }
   }
 
-  // xAI last while this project's key/team is flaky
   if (xaiKey) {
     for (const model of [
       process.env.XAI_MODEL,
