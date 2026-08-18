@@ -2,6 +2,14 @@ import { TARU_SYSTEM_PROMPT } from './persona';
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'system'; content: string };
 
+/** Strip quotes/whitespace the way Cathedral Wing envKey does */
+function envKey(name: string): string | undefined {
+  const v = process.env[name];
+  if (!v) return undefined;
+  const t = v.trim().replace(/^['"]|['"]$/g, '');
+  return t.length ? t : undefined;
+}
+
 async function callOpenAICompatible(
   baseUrl: string,
   apiKey: string,
@@ -35,43 +43,6 @@ async function callOpenAICompatible(
   return content;
 }
 
-async function callGemini(
-  apiKey: string,
-  model: string,
-  messages: ChatMessage[]
-): Promise<string> {
-  const system = messages.find((m) => m.role === 'system')?.content || '';
-  const contents = messages
-    .filter((m) => m.role !== 'system')
-    .map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      contents,
-      generationConfig: { temperature: 0.85, maxOutputTokens: 600 },
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`LLM error ${res.status}: ${errText.slice(0, 200)}`);
-  }
-
-  const data = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const content = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-  if (!content) throw new Error('Empty Gemini response');
-  return content;
-}
-
 function offlineReply(userText: string, reason?: string): string {
   const lower = userText.toLowerCase();
   const hint = reason ? ` (${reason})` : '';
@@ -87,6 +58,11 @@ function offlineReply(userText: string, reason?: string): string {
   return `I'm listening from the tesseract. Brain is in offline fallback${hint}. You said: "${userText.slice(0, 100)}"\n{"emotion":"listen","action":"listen","glow":0.5}`;
 }
 
+/**
+ * Cascade aligned with cathedral-wing GrokClient (Aug 2026):
+ *   Gemini (OpenAI-compat endpoint) → xAI
+ * Model defaults match Protege/Cathedral, not the broken gemini-2.0-flash id.
+ */
 export async function routeAgentChat(
   history: ChatMessage[],
   userMessage: string
@@ -97,29 +73,60 @@ export async function routeAgentChat(
     { role: 'user', content: userMessage },
   ];
 
-  const xaiKey = process.env.XAI_API_KEY?.trim();
-  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  const xaiKey = envKey('XAI_API_KEY');
+  const geminiKey = envKey('GEMINI_API_KEY') || envKey('GOOGLE_API_KEY');
+  const groqKey = envKey('GROQ_API_KEY');
 
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
 
-  // Prefer Gemini while xAI key/team is broken (can swap order later)
+  // Gemini via OpenAI-compatible surface (same as Cathedral Wing)
   if (geminiKey) {
-    for (const model of [
+    const geminiModels = [
       process.env.GEMINI_MODEL,
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
+      'gemini-3.6-flash',
       'gemini-3.5-flash',
+      'gemini-2.5-flash',
       'gemini-1.5-flash',
-    ].filter(Boolean) as string[]) {
+    ].filter(Boolean) as string[];
+
+    for (const model of geminiModels) {
       attempts.push({
         name: `gemini:${model}`,
-        run: () => callGemini(geminiKey, model, messages),
+        run: () =>
+          callOpenAICompatible(
+            'https://generativelanguage.googleapis.com/v1beta/openai/',
+            geminiKey,
+            model,
+            messages
+          ),
       });
     }
   }
 
+  // Groq if present (Cathedral free-tier path)
+  if (groqKey) {
+    for (const model of [
+      process.env.GROQ_MODEL,
+      'openai/gpt-oss-20b',
+      'openai/gpt-oss-120b',
+    ].filter(Boolean) as string[]) {
+      attempts.push({
+        name: `groq:${model}`,
+        run: () =>
+          callOpenAICompatible('https://api.groq.com/openai/v1', groqKey, model, messages),
+      });
+    }
+  }
+
+  // xAI last while this project's key/team is flaky
   if (xaiKey) {
-    for (const model of [process.env.XAI_MODEL, 'grok-4.6', 'grok-3', 'grok-3-mini'].filter(Boolean) as string[]) {
+    for (const model of [
+      process.env.XAI_MODEL,
+      'grok-4.5',
+      'grok-4-fast',
+      'grok-4.6',
+      'grok-3',
+    ].filter(Boolean) as string[]) {
       attempts.push({
         name: `xai:${model}`,
         run: () =>
@@ -134,7 +141,7 @@ export async function routeAgentChat(
   }
 
   if (attempts.length === 0) {
-    return offlineReply(userMessage, 'no XAI_API_KEY or GEMINI_API_KEY on deployment');
+    return offlineReply(userMessage, 'no GEMINI_API_KEY / GROQ_API_KEY / XAI_API_KEY');
   }
 
   const errors: string[] = [];
