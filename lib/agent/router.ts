@@ -99,9 +99,24 @@ export async function routeAgentChat(
 
   const xaiKey = process.env.XAI_API_KEY?.trim();
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
-  // OPENAI intentionally skipped — account not paid; re-enable when billing is active
 
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
+
+  // Prefer Gemini while xAI key/team is broken (can swap order later)
+  if (geminiKey) {
+    for (const model of [
+      process.env.GEMINI_MODEL,
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-3.5-flash',
+      'gemini-1.5-flash',
+    ].filter(Boolean) as string[]) {
+      attempts.push({
+        name: `gemini:${model}`,
+        run: () => callGemini(geminiKey, model, messages),
+      });
+    }
+  }
 
   if (xaiKey) {
     for (const model of [process.env.XAI_MODEL, 'grok-4.6', 'grok-3', 'grok-3-mini'].filter(Boolean) as string[]) {
@@ -114,15 +129,6 @@ export async function routeAgentChat(
             model,
             messages
           ),
-      });
-    }
-  }
-
-  if (geminiKey) {
-    for (const model of [process.env.GEMINI_MODEL, 'gemini-2.0-flash', 'gemini-1.5-flash'].filter(Boolean) as string[]) {
-      attempts.push({
-        name: `gemini:${model}`,
-        run: () => callGemini(geminiKey, model, messages),
       });
     }
   }
