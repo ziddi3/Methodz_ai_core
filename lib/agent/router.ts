@@ -21,6 +21,7 @@ export function looksNsfw(text: string): boolean {
     'naked',
     'horny',
     'aroused',
+    'arousing',
     'moan',
     'fuck',
     'fucking',
@@ -35,14 +36,10 @@ export function looksNsfw(text: string): boolean {
     'penetrat',
     'thrust',
     'ride me',
-    'dom',
-    'sub',
     'bondage',
     'kink',
     'roleplay',
     'role play',
-    'rp ',
-    ' bed ',
     'kiss me',
     'touch me',
     'strip',
@@ -90,19 +87,10 @@ async function callOpenAICompatible(
   return content;
 }
 
-function offlineReply(userText: string, reason?: string): string {
-  const lower = userText.toLowerCase();
-  const hint = reason ? ` (${reason})` : '';
-  if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
-    return `Hey. Taru here — perched on Tartus, circuits warm. What are we collapsing today?\n{"emotion":"smirk","action":"smirk","glow":0.7}`;
-  }
-  if (lower.includes('tail')) {
-    return `*tail flicks through the void* You noticed. Good. Quantum cats prefer witnesses.\n{"emotion":"tail_flick","action":"tail_flick","glow":0.85}`;
-  }
-  if (lower.includes('methodz') || lower.includes('nexus')) {
-    return `Methodz is the lattice; Nexus is the walkable map; Tartus is my seat. I'm the soft interface between them — cute on purpose, sharp when it matters.\n{"emotion":"think","action":"think","glow":0.55}`;
-  }
-  return `I'm listening from the tesseract. Brain is in offline fallback${hint}. You said: "${userText.slice(0, 100)}"\n{"emotion":"listen","action":"listen","glow":0.5}`;
+/** Always expose provider failure reason — never keyword-match the memory-enriched blob. */
+function offlineReply(reason?: string): string {
+  const hint = reason ? reason.slice(0, 280) : 'all providers failed';
+  return `Tartus soft-link is offline right now — every LLM path failed. (${hint}) Fix GEMINI_API_KEY / XAI_API_KEY / GROQ_API_KEY on Vercel and redeploy.\n{"emotion":"listen","action":"listen","glow":0.35}`;
 }
 
 function pushXai(
@@ -137,10 +125,10 @@ function pushGemini(
 ) {
   const geminiModels = [
     process.env.GEMINI_MODEL,
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
     'gemini-2.5-flash',
+    'gemini-2.0-flash',
     'gemini-1.5-flash',
+    'gemini-1.5-flash-latest',
   ].filter(Boolean) as string[];
 
   for (const model of geminiModels) {
@@ -164,8 +152,8 @@ function pushGroq(
 ) {
   for (const model of [
     process.env.GROQ_MODEL,
-    'openai/gpt-oss-20b',
-    'openai/gpt-oss-120b',
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
   ].filter(Boolean) as string[]) {
     attempts.push({
       name: `groq:${model}`,
@@ -205,7 +193,7 @@ export async function routeAgentChat(
   }
 
   if (attempts.length === 0) {
-    return offlineReply(userMessage, 'no GEMINI_API_KEY / GROQ_API_KEY / XAI_API_KEY');
+    return offlineReply('no GEMINI_API_KEY / GROQ_API_KEY / XAI_API_KEY');
   }
 
   const errors: string[] = [];
@@ -217,10 +205,10 @@ export async function routeAgentChat(
       console.error(`Agent router ${attempt.name} failed`, msg);
       const family = attempt.name.split(':')[0];
       if (!errors.some((e) => e.startsWith(family))) {
-        errors.push(`${attempt.name}: ${msg.slice(0, 100)}`);
+        errors.push(`${attempt.name}: ${msg.slice(0, 120)}`);
       }
     }
   }
 
-  return offlineReply(userMessage, errors.join(' | '));
+  return offlineReply(errors.join(' | '));
 }
