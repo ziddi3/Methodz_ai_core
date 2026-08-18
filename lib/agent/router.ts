@@ -9,7 +9,7 @@ function envKey(name: string): string | undefined {
   return t.length ? t : undefined;
 }
 
-/** Heuristic: prefer xAI when the turn looks erotic / adult. */
+/** Heuristic: prefer Groq when the turn looks erotic / adult (Gemini often refuses). */
 export function looksNsfw(text: string): boolean {
   const t = text.toLowerCase();
   const keys = [
@@ -87,10 +87,9 @@ async function callOpenAICompatible(
   return content;
 }
 
-/** Always expose provider failure reason — never keyword-match the memory-enriched blob. */
 function offlineReply(reason?: string): string {
   const hint = reason ? reason.slice(0, 280) : 'all providers failed';
-  return `Tartus soft-link is offline right now — every LLM path failed. (${hint}) Fix GEMINI_API_KEY / XAI_API_KEY / GROQ_API_KEY on Vercel and redeploy.\n{"emotion":"listen","action":"listen","glow":0.35}`;
+  return `Tartus soft-link is offline right now — every LLM path failed. (${hint}) Set GROQ_API_KEY (and/or GEMINI_API_KEY) on Vercel and redeploy.\n{"emotion":"listen","action":"listen","glow":0.35}`;
 }
 
 function pushXai(
@@ -102,7 +101,6 @@ function pushXai(
     process.env.XAI_MODEL,
     'grok-4.5',
     'grok-4-fast',
-    'grok-4.6',
     'grok-3',
   ].filter(Boolean) as string[]) {
     attempts.push({
@@ -180,20 +178,20 @@ export async function routeAgentChat(
   const nsfw = looksNsfw(userMessage) || history.slice(-4).some((m) => looksNsfw(m.content));
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
 
-  // NSFW / erotic → xAI first (more permissive), then others
+  // Primary brain: Groq (free API). NSFW → Groq first so Gemini safety is avoided.
+  // xAI only if a real console key exists (optional).
   if (nsfw) {
+    if (groqKey) pushGroq(attempts, groqKey, messages);
+    if (geminiKey) pushGemini(attempts, geminiKey, messages);
     if (xaiKey) pushXai(attempts, xaiKey, messages);
-    if (groqKey) pushGroq(attempts, groqKey, messages);
-    if (geminiKey) pushGemini(attempts, geminiKey, messages);
   } else {
-    // Default: Gemini → Groq → xAI
-    if (geminiKey) pushGemini(attempts, geminiKey, messages);
     if (groqKey) pushGroq(attempts, groqKey, messages);
+    if (geminiKey) pushGemini(attempts, geminiKey, messages);
     if (xaiKey) pushXai(attempts, xaiKey, messages);
   }
 
   if (attempts.length === 0) {
-    return offlineReply('no GEMINI_API_KEY / GROQ_API_KEY / XAI_API_KEY');
+    return offlineReply('no GROQ_API_KEY / GEMINI_API_KEY');
   }
 
   const errors: string[] = [];
