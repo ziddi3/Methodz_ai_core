@@ -13,6 +13,10 @@ import {
   wantsProtege,
 } from '@/lib/agent/protege';
 import { routeAgentChat, type ChatMessage } from '@/lib/agent/router';
+import {
+  formatEcosystemInventory,
+  wantsGithubReach,
+} from '@/lib/agent/github';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -59,13 +63,21 @@ export async function POST(req: NextRequest) {
 
     let enriched = `${memoryBlock}\n\nUser: ${message}`;
     let protegeLinked = false;
+    let githubLinked = false;
+
+    // Bob / ecosystem reach: inject live GitHub inventory when relevant
+    if (wantsGithubReach(message)) {
+      const inventory = await formatEcosystemInventory();
+      enriched = `${memoryBlock}\n\n${inventory}\n\nUser: ${message}`;
+      githubLinked = true;
+    }
 
     if (body.entangleProtege || wantsProtege(message)) {
       const status = await fetchProtegeStatus();
       const think = await askProtege(
         `Taru (Methodz AI Core, Tartus seat, agent:tartus) is relaying this from the surface to you, the Cathedral/Protege oracle. Respond as yourself — concise insight the soft surface can relay to the human.\n\nHuman/Taru message: ${message}`
       );
-      enriched = `${memoryBlock}\n\nUser: ${message}\n\n${formatProtegeForTaru(status, think)}`;
+      enriched = `${enriched}\n\n${formatProtegeForTaru(status, think)}`;
       protegeLinked = true;
       if (think.ok && think.insight) {
         await rememberProtegeInsight({
@@ -91,6 +103,7 @@ export async function POST(req: NextRequest) {
         agent: 'taru',
         namespace: 'agent:tartus',
         protegeLinked,
+        githubLinked,
         memory: {
           facts: continuity.facts.length,
           episodes: continuity.episodes.length + 2,
