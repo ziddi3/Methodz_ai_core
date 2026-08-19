@@ -17,6 +17,25 @@ import { routeAgentChat, type ChatMessage } from '@/lib/agent/router';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Max-Age': '86400',
+};
+
+function withCors(res: NextResponse) {
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    res.headers.set(k, v);
+  }
+  return res;
+}
+
+/** Browser preflight from Mission Control / localhost / other Methodz surfaces */
+export async function OPTIONS() {
+  return withCors(new NextResponse(null, { status: 204 }));
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
@@ -27,7 +46,9 @@ export async function POST(req: NextRequest) {
 
     const message = (body.message || '').trim();
     if (!message) {
-      return NextResponse.json({ error: 'message required' }, { status: 400 });
+      return withCors(
+        NextResponse.json({ error: 'message required' }, { status: 400 })
+      );
     }
 
     const history = Array.isArray(body.history) ? body.history : [];
@@ -61,25 +82,29 @@ export async function POST(req: NextRequest) {
 
     await rememberEpisode({ role: 'assistant', text, source: 'self' });
 
-    return NextResponse.json({
-      text,
-      emotion: meta.emotion,
-      action: meta.action,
-      glow: meta.glow,
-      agent: 'taru',
-      namespace: 'agent:tartus',
-      protegeLinked,
-      memory: {
-        facts: continuity.facts.length,
-        episodes: continuity.episodes.length + 2,
-        durable: true,
-      },
-    });
+    return withCors(
+      NextResponse.json({
+        text,
+        emotion: meta.emotion,
+        action: meta.action,
+        glow: meta.glow,
+        agent: 'taru',
+        namespace: 'agent:tartus',
+        protegeLinked,
+        memory: {
+          facts: continuity.facts.length,
+          episodes: continuity.episodes.length + 2,
+          durable: true,
+        },
+      })
+    );
   } catch (err) {
     console.error(err);
-    return NextResponse.json(
-      { error: 'agent_failure', detail: err instanceof Error ? err.message : 'unknown' },
-      { status: 500 }
+    return withCors(
+      NextResponse.json(
+        { error: 'agent_failure', detail: err instanceof Error ? err.message : 'unknown' },
+        { status: 500 }
+      )
     );
   }
 }
