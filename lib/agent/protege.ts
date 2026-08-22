@@ -28,7 +28,45 @@ export interface ProtegeStatus {
     source?: string;
     deepModel?: string;
     lastInsightPreview?: string | null;
+    lastError?: string | null;
+    providers?: Array<{
+      name: string;
+      hasKey: boolean;
+      dead: boolean;
+      deadReason?: string;
+      secondsUntilRecovery?: number | null;
+    }>;
   };
+}
+
+export interface ProtegeCognitionHealth {
+  ok: boolean;
+  realm?: string;
+  enabled?: boolean;
+  source?: string;
+  recoveryMs?: number;
+  lastError?: string | null;
+  keysPresent?: { xai?: boolean; groq?: boolean; gemini?: boolean };
+  providers?: Array<{
+    name: string;
+    hasKey: boolean;
+    dead: boolean;
+    deadReason?: string;
+    secondsUntilRecovery?: number | null;
+  }>;
+  probes?: Array<{
+    name: string;
+    ok: boolean;
+    latencyMs: number;
+    model?: string;
+    error?: string;
+    resurrected?: boolean;
+  }>;
+  deepCalls?: number;
+  fastCalls?: number;
+  probeCalls?: number;
+  checkedAt?: string;
+  error?: string;
 }
 
 export async function fetchProtegeStatus(): Promise<ProtegeStatus | null> {
@@ -40,6 +78,36 @@ export async function fetchProtegeStatus(): Promise<ProtegeStatus | null> {
     return (await res.json()) as ProtegeStatus;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Live probe of Cathedral cognition providers.
+ * Hits GET /api/cognition/health
+ * Pass force=true to ignore current dead flags and re-test every provider.
+ */
+export async function probeProtegeCognition(
+  force = false
+): Promise<ProtegeCognitionHealth> {
+  try {
+    const url = `${baseUrl()}/api/cognition/health${force ? '?force=1' : ''}`;
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(45_000),
+    });
+    const data = (await res.json()) as ProtegeCognitionHealth;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: data.error || `HTTP ${res.status}`,
+        realm: data.realm,
+      };
+    }
+    return data;
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -65,7 +133,11 @@ export async function askProtege(thought: string): Promise<{
       realm?: string;
     };
     if (!res.ok) {
-      return { ok: false, error: data.error || `HTTP ${res.status}`, realm: data.realm };
+      return {
+        ok: false,
+        error: data.error || `HTTP ${res.status}`,
+        realm: data.realm,
+      };
     }
     return {
       ok: true,
@@ -90,13 +162,16 @@ export function wantsProtege(message: string): boolean {
     m.includes('grokis') ||
     m.includes('ask the wing') ||
     m.includes('entangle with protege') ||
-    m.includes('talk to protege')
+    m.includes('talk to protege') ||
+    m.includes('cognition health') ||
+    m.includes('provider status')
   );
 }
 
 export function formatProtegeForTaru(
   status: ProtegeStatus | null,
-  think?: { ok: boolean; insight?: string; error?: string; realm?: string }
+  think?: { ok: boolean; insight?: string; error?: string; realm?: string },
+  health?: ProtegeCognitionHealth | null
 ): string {
   const lines: string[] = ['[PROTEGE / CATHEDRAL LINK]'];
   if (status?.realm?.id) lines.push(`Realm: ${status.realm.id}`);
@@ -111,16 +186,43 @@ export function formatProtegeForTaru(
   }
   if (status?.self?.goals?.length)
     lines.push(`Goals: ${status.self.goals.slice(0, 3).join(' · ')}`);
-  if (status?.cognition)
+
+  if (health) {
+    lines.push(
+      `Cognition health: ${health.enabled ? 'ONLINE' : 'OFFLINE'} source=${health.source || '—'}`
+    );
+    if (health.providers?.length) {
+      for (const p of health.providers) {
+        const rec =
+          p.dead && p.secondsUntilRecovery != null
+            ? ` (recover in ~${p.secondsUntilRecovery}s)`
+            : '';
+        lines.push(
+          `  · ${p.name}: ${p.dead ? 'dead' : 'live'}${rec}${
+            p.deadReason ? ` — ${p.deadReason.slice(0, 80)}` : ''
+          }`
+        );
+      }
+    }
+    if (health.probes?.length) {
+      const okCount = health.probes.filter((p) => p.ok).length;
+      lines.push(`Probe: ${okCount}/${health.probes.length} live`);
+    }
+    if (health.lastError) lines.push(`Last error: ${health.lastError.slice(0, 120)}`);
+  } else if (status?.cognition) {
     lines.push(
       `Cognition: ${status.cognition.enabled ? status.cognition.source : 'offline'} ${status.cognition.deepModel || ''}`
     );
+  }
+
   if (think?.ok && think.insight) {
     lines.push('--- Protege thought ---');
     lines.push(think.insight.slice(0, 1200));
   } else if (think && !think.ok) {
     lines.push(`Protege think failed: ${think.error || 'unknown'}`);
   }
-  lines.push('[END PROTEGE LINK — relay this in character as Taru; you are the soft surface, Protege is the private oracle wing]');
+  lines.push(
+    '[END PROTEGE LINK — relay this in character as Taru; you are the soft surface, Protege is the private oracle wing]'
+  );
   return lines.join('\n');
 }
