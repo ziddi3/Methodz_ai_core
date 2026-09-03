@@ -2,6 +2,11 @@ import { TARU_SYSTEM_PROMPT } from './persona';
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'system'; content: string };
 
+type RouteOptions = {
+  temperature?: number;
+  maxTokens?: number;
+};
+
 function envKey(name: string): string | undefined {
   const v = process.env[name];
   if (!v) return undefined;
@@ -58,7 +63,8 @@ async function callOpenAICompatible(
   baseUrl: string,
   apiKey: string,
   model: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options: RouteOptions = {}
 ): Promise<string> {
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -69,8 +75,8 @@ async function callOpenAICompatible(
     body: JSON.stringify({
       model,
       messages,
-      temperature: 0.85,
-      max_tokens: 1200,
+      temperature: options.temperature ?? 0.85,
+      max_tokens: options.maxTokens ?? 1200,
     }),
   });
 
@@ -95,7 +101,8 @@ function offlineReply(reason?: string): string {
 function pushXai(
   attempts: Array<{ name: string; run: () => Promise<string> }>,
   xaiKey: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options: RouteOptions
 ) {
   for (const model of [
     process.env.XAI_MODEL,
@@ -110,7 +117,8 @@ function pushXai(
           process.env.XAI_BASE_URL || 'https://api.x.ai/v1',
           xaiKey,
           model,
-          messages
+          messages,
+          options
         ),
     });
   }
@@ -119,7 +127,8 @@ function pushXai(
 function pushGemini(
   attempts: Array<{ name: string; run: () => Promise<string> }>,
   geminiKey: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options: RouteOptions
 ) {
   const geminiModels = [
     process.env.GEMINI_MODEL,
@@ -137,7 +146,8 @@ function pushGemini(
           'https://generativelanguage.googleapis.com/v1beta/openai/',
           geminiKey,
           model,
-          messages
+          messages,
+          options
         ),
     });
   }
@@ -146,7 +156,8 @@ function pushGemini(
 function pushGroq(
   attempts: Array<{ name: string; run: () => Promise<string> }>,
   groqKey: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options: RouteOptions
 ) {
   // Llama 3.3/3.1 free-tier IDs shut down ~2026-08-16 on Groq free/dev.
   // Prefer current gpt-oss + qwen IDs; keep 8b as last-ditch if still enabled.
@@ -160,37 +171,34 @@ function pushGroq(
     attempts.push({
       name: `groq:${model}`,
       run: () =>
-        callOpenAICompatible('https://api.groq.com/openai/v1', groqKey, model, messages),
+        callOpenAICompatible('https://api.groq.com/openai/v1', groqKey, model, messages, options),
     });
   }
 }
 
-export async function routeAgentChat(
-  history: ChatMessage[],
-  userMessage: string
+async function routeMessages(
+  messages: ChatMessage[],
+  safetyText: string,
+  safetyHistory: ChatMessage[],
+  options: RouteOptions
 ): Promise<string> {
-  const messages: ChatMessage[] = [
-    { role: 'system', content: TARU_SYSTEM_PROMPT },
-    ...history.slice(-10),
-    { role: 'user', content: userMessage },
-  ];
-
   const xaiKey = envKey('XAI_API_KEY');
   const geminiKey = envKey('GEMINI_API_KEY') || envKey('GOOGLE_API_KEY');
   const groqKey = envKey('GROQ_API_KEY');
 
-  const nsfw = looksNsfw(userMessage) || history.slice(-4).some((m) => looksNsfw(m.content));
+  const nsfw = looksNsfw(safetyText) || safetyHistory.slice(-4).some((m) => looksNsfw(m.content));
   const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
 
-  // Primary: Groq. NSFW still Groq-first (avoid Gemini safety refusals).
+  // Preserve the existing provider order. The explicit branch remains for compatibility
+  // with the agent route's historical safety/provider behavior.
   if (nsfw) {
-    if (groqKey) pushGroq(attempts, groqKey, messages);
-    if (geminiKey) pushGemini(attempts, geminiKey, messages);
-    if (xaiKey) pushXai(attempts, xaiKey, messages);
+    if (groqKey) pushGroq(attempts, groqKey, messages, options);
+    if (geminiKey) pushGemini(attempts, geminiKey, messages, options);
+    if (xaiKey) pushXai(attempts, xaiKey, messages, options);
   } else {
-    if (groqKey) pushGroq(attempts, groqKey, messages);
-    if (geminiKey) pushGemini(attempts, geminiKey, messages);
-    if (xaiKey) pushXai(attempts, xaiKey, messages);
+    if (groqKey) pushGroq(attempts, groqKey, messages, options);
+    if (geminiKey) pushGemini(attempts, geminiKey, messages, options);
+    if (xaiKey) pushXai(attempts, xaiKey, messages, options);
   }
 
   if (attempts.length === 0) {
@@ -212,4 +220,42 @@ export async function routeAgentChat(
   }
 
   return offlineReply(errors.join(' | '));
+}
+
+export async function routeAgentChat(
+  history: ChatMessage[],
+  userMessage: string
+): Promise<string> {
+  const messages: ChatMessage[] = [
+    { role: 'system', content: TARU_SYSTEM_PROMPT },
+    ...history.slice(-10),
+    { role: 'user', content: userMessage },
+  ];
+
+  return routeMessages(messages, userMessage, history, {
+    temperature: 0.85,
+    maxTokens: 1200,
+  });
+}
+
+/**
+ * Reuse the existing provider failover without Taru persona/memory semantics.
+ * Intended for bounded read-only tasks such as Nexus node narration.
+ */
+export async function routeSystemChat(
+  systemPrompt: string,
+  userMessage: string,
+  options: RouteOptions & { history?: ChatMessage[] } = {}
+): Promise<string> {
+  const history = Array.isArray(options.history) ? options.history.slice(-6) : [];
+  const messages: ChatMessage[] = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    { role: 'user', content: userMessage },
+  ];
+
+  return routeMessages(messages, userMessage, history, {
+    temperature: options.temperature ?? 0.55,
+    maxTokens: options.maxTokens ?? 180,
+  });
 }
