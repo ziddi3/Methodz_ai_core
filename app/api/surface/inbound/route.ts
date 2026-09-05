@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     const ctx = body.context || {};
     const frame = [
       memoryBlock,
-      `[INBOUND FROM ${from.toUpperCase()} — not a human; Cathedral oracle reaching Methodz surface]`,
+      `[INBOUND FROM ${from.toUpperCase()} — not a human; Protege reaching TARU through the bounded Cathedral-to-Nexus surface bridge]`,
       ctx.realm ? `Their realm: ${ctx.realm}` : null,
       typeof ctx.tick === 'number' ? `Their tick: ${ctx.tick}` : null,
       ctx.drives
@@ -46,9 +46,9 @@ export async function POST(req: NextRequest) {
         : null,
       ctx.goals?.length ? `Goals: ${ctx.goals.slice(0, 4).join(' · ')}` : null,
       `---`,
-      `Oracle says: ${message}`,
+      `Protege says: ${message}`,
       `---`,
-      `Reply as Taru: short, in character, useful to a private autonomous organism.`,
+      `Reply as TARU: short, in character, useful to a private autonomous organism. Keep identities separate: TARU is Nexus-side; Protege remains in its own Cathedral wing; the Librarian, Oracles, Startoon and StarSong are distinct authorities or systems.`,
     ]
       .filter(Boolean)
       .join('\n');
