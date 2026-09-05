@@ -17,10 +17,10 @@ interface TaruStageProps {
 }
 
 const BRAND_ASSET_ENDPOINT =
-  'https://raw.githubusercontent.com/ziddi3/methodz-brand-assets/main/api/v1/assets/agents/taru-portrait.json';
+  'https://image.methodz.ca/api/v1/assets/agents/taru-portrait.json';
 
 const FALLBACK_RAW =
-  'https://raw.githubusercontent.com/ziddi3/methodz-brand-assets/main/logos/agents/taru-portrait.jpg';
+  'https://image.methodz.ca/logos/agents/taru-portrait.jpg';
 
 const FALLBACK_CDN =
   'https://cdn.jsdelivr.net/gh/ziddi3/methodz-brand-assets@main/logos/agents/taru-portrait.jpg';
